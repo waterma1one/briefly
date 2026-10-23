@@ -10,8 +10,14 @@ import {
   tool
 } from "ai";
 import { z } from "zod";
+import { addFact, factsPrompt, removeFacts } from "./memory";
 
-export class ChatAgent extends AIChatAgent<Env> {
+const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+
+export type BrieflyState = { facts: string[] };
+
+export class ChatAgent extends AIChatAgent<Env, BrieflyState> {
+  initialState: BrieflyState = { facts: [] };
   maxPersistedMessages = 100;
   chatRecovery = true;
   // Wait for MCP connections to be re-established after hibernation before
@@ -51,79 +57,47 @@ export class ChatAgent extends AIChatAgent<Env> {
     const workersai = createWorkersAI({ binding: this.env.AI });
 
     const result = streamText({
-      model: workersai("@cf/moonshotai/kimi-k2.7-code", {
-        sessionAffinity: this.sessionAffinity
-      }),
-      system: `You are a helpful assistant that can understand images. You can check the weather, get the user's timezone, run calculations, and schedule tasks. When users share images, describe what you see and answer questions about them.
+      model: workersai(MODEL, { sessionAffinity: this.sessionAffinity }),
+      system: `You are Briefly, a concise research assistant. Answer directly and ask a short question when a request is ambiguous.
+
+${factsPrompt(this.state.facts)}
+
+When the user shares a lasting preference, goal or personal detail, call the remember tool. When they ask you to forget something, call forget.
 
 ${getSchedulePrompt({ date: new Date() })}
 
 If the user asks to schedule a task, use the schedule tool to schedule the task.`,
-      // Prune old tool calls and reasoning to save tokens on long conversations
       messages: pruneMessages({
         messages: await convertToModelMessages(this.messages),
         toolCalls: "before-last-2-messages",
         reasoning: "before-last-message"
       }),
       tools: {
-        // MCP tools from connected servers
         ...mcpTools,
 
-        // Server-side tool: runs automatically on the server
-        getWeather: tool({
-          description: "Get the current weather for a city",
+        remember: tool({
+          description:
+            "Save a lasting fact about the user (preference, goal, role) as one short sentence.",
           inputSchema: z.object({
-            city: z.string().describe("City name")
+            fact: z.string().describe("One short sentence")
           }),
-          execute: async ({ city }) => {
-            // Replace with a real weather API in production
-            const conditions = ["sunny", "cloudy", "rainy", "snowy"];
-            const temp = Math.floor(Math.random() * 30) + 5;
-            return {
-              city,
-              temperature: temp,
-              condition:
-                conditions[Math.floor(Math.random() * conditions.length)],
-              unit: "celsius"
-            };
+          execute: async ({ fact }) => {
+            const facts = addFact(this.state.facts, fact);
+            this.setState({ ...this.state, facts });
+            return { saved: fact, total: facts.length };
           }
         }),
 
-        // Client-side tool: no execute function — the browser handles it
-        getUserTimezone: tool({
-          description:
-            "Get the user's timezone from their browser. Use this when you need to know the user's local time.",
-          inputSchema: z.object({})
-        }),
-
-        // Approval tool: requires user confirmation before executing
-        calculate: tool({
-          description:
-            "Perform a math calculation with two numbers. Requires user approval for large numbers.",
+        forget: tool({
+          description: "Delete saved facts that contain the given text.",
           inputSchema: z.object({
-            a: z.number().describe("First number"),
-            b: z.number().describe("Second number"),
-            operator: z
-              .enum(["+", "-", "*", "/", "%"])
-              .describe("Arithmetic operator")
+            text: z.string().describe("Text matching the fact(s) to delete")
           }),
-          needsApproval: async ({ a, b }) =>
-            Math.abs(a) > 1000 || Math.abs(b) > 1000,
-          execute: async ({ a, b, operator }) => {
-            const ops: Record<string, (x: number, y: number) => number> = {
-              "+": (x, y) => x + y,
-              "-": (x, y) => x - y,
-              "*": (x, y) => x * y,
-              "/": (x, y) => x / y,
-              "%": (x, y) => x % y
-            };
-            if (operator === "/" && b === 0) {
-              return { error: "Division by zero" };
-            }
-            return {
-              expression: `${a} ${operator} ${b}`,
-              result: ops[operator](a, b)
-            };
+          execute: async ({ text }) => {
+            const facts = removeFacts(this.state.facts, text);
+            const removed = this.state.facts.length - facts.length;
+            this.setState({ ...this.state, facts });
+            return { removed };
           }
         }),
 
@@ -153,33 +127,9 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
               return `Error scheduling task: ${error}`;
             }
           }
-        }),
-
-        getScheduledTasks: tool({
-          description: "List all tasks that have been scheduled",
-          inputSchema: z.object({}),
-          execute: async () => {
-            const tasks = this.getSchedules();
-            return tasks.length > 0 ? tasks : "No scheduled tasks found.";
-          }
-        }),
-
-        cancelScheduledTask: tool({
-          description: "Cancel a scheduled task by its ID",
-          inputSchema: z.object({
-            taskId: z.string().describe("The ID of the task to cancel")
-          }),
-          execute: async ({ taskId }) => {
-            try {
-              this.cancelSchedule(taskId);
-              return `Task ${taskId} cancelled.`;
-            } catch (error) {
-              return `Error cancelling task: ${error}`;
-            }
-          }
         })
       },
-      stopWhen: stepCountIs(20),
+      stopWhen: stepCountIs(10),
       abortSignal: options?.abortSignal
     });
 
