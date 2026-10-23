@@ -50,6 +50,19 @@ interface Attachment {
   mediaType: string;
 }
 
+/** Stable per-browser id so each visitor gets their own Durable Object. */
+function getUserId(): string {
+  try {
+    const existing = localStorage.getItem("briefly-user");
+    if (existing) return existing;
+    const id = crypto.randomUUID();
+    localStorage.setItem("briefly-user", id);
+    return id;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
 function createAttachment(file: File): Attachment {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -282,6 +295,7 @@ function Chat() {
   const [isAddingServer, setIsAddingServer] = useState(false);
   const mcpPanelRef = useRef<HTMLDivElement>(null);
 
+  const [userId] = useState(getUserId);
   const [brieflyState, setBrieflyState] = useState<BrieflyState>({
     facts: [],
     research: null
@@ -289,6 +303,7 @@ function Chat() {
 
   const agent = useAgent<ChatAgent, BrieflyState>({
     agent: "ChatAgent",
+    name: userId,
     onStateUpdate: useCallback(
       (state: BrieflyState) => setBrieflyState(state),
       []
