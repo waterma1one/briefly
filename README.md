@@ -2,6 +2,8 @@
 
 A chat agent on Cloudflare that remembers you and writes research briefs.
 
+Live: https://briefly.blusinghaditya.workers.dev
+
 | Requirement             | Implementation                                                                                                              |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | LLM                     | Llama 3.3 70B (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`) on Workers AI                                                    |
