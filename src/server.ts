@@ -10,14 +10,17 @@ import {
   tool
 } from "ai";
 import { z } from "zod";
+import { MODEL } from "./model";
+import type { ResearchProgress, ResearchState } from "./research";
 import { addFact, factsPrompt, removeFacts } from "./memory";
 
-const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-
-export type BrieflyState = { facts: string[] };
+export type BrieflyState = {
+  facts: string[];
+  research: ResearchState | null;
+};
 
 export class ChatAgent extends AIChatAgent<Env, BrieflyState> {
-  initialState: BrieflyState = { facts: [] };
+  initialState: BrieflyState = { facts: [], research: null };
   maxPersistedMessages = 100;
   chatRecovery = true;
   // Wait for MCP connections to be re-established after hibernation before
@@ -101,6 +104,24 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
           }
         }),
 
+        startResearch: tool({
+          description:
+            "Run a background multi-step research workflow on a topic and produce a written brief. Use when the user asks to research, investigate or brief them on something.",
+          inputSchema: z.object({
+            topic: z.string().describe("The topic to research")
+          }),
+          execute: async ({ topic }) => {
+            const instanceId = await this.runWorkflow("RESEARCH_WORKFLOW", {
+              topic
+            });
+            this.setState({
+              ...this.state,
+              research: { instanceId, topic, status: "running" }
+            });
+            return `Research started on "${topic}". The brief will appear in the side panel when ready.`;
+          }
+        }),
+
         scheduleTask: tool({
           description:
             "Schedule a task to be executed at a later time. Use this when the user asks to be reminded or wants something done later.",
@@ -136,6 +157,45 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
     return result.toUIMessageStreamResponse();
   }
 
+  async onWorkflowProgress(
+    _workflowName: string,
+    instanceId: string,
+    progress: unknown
+  ) {
+    const research = this.state.research;
+    if (research?.instanceId !== instanceId) return;
+    this.setState({
+      ...this.state,
+      research: { ...research, progress: progress as ResearchProgress }
+    });
+  }
+
+  async onWorkflowComplete(
+    _workflowName: string,
+    instanceId: string,
+    result?: unknown
+  ) {
+    const research = this.state.research;
+    if (research?.instanceId !== instanceId) return;
+    this.setState({
+      ...this.state,
+      research: { ...research, status: "complete", brief: String(result) }
+    });
+  }
+
+  async onWorkflowError(
+    _workflowName: string,
+    instanceId: string,
+    error: string
+  ) {
+    const research = this.state.research;
+    if (research?.instanceId !== instanceId) return;
+    this.setState({
+      ...this.state,
+      research: { ...research, status: "error", error }
+    });
+  }
+
   async executeTask(description: string, _task: Schedule<string>) {
     // Do the actual work here (send email, call API, etc.)
     console.log(`Executing scheduled task: ${description}`);
@@ -153,6 +213,8 @@ If the user asks to schedule a task, use the schedule tool to schedule the task.
     );
   }
 }
+
+export { ResearchWorkflow } from "./workflow";
 
 export default {
   async fetch(request: Request, env: Env) {

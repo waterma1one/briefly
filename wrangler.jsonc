@@ -10,6 +10,13 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/agents/*", "/oauth/*"]
   },
+  "workflows": [
+    {
+      "name": "briefly-research",
+      "binding": "RESEARCH_WORKFLOW",
+      "class_name": "ResearchWorkflow"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
