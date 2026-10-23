@@ -1,3 +1,4 @@
+import { withStreamDedupe } from "./ai-binding";
 import { createWorkersAI } from "workers-ai-provider";
 import { callable, routeAgentRequest, type Schedule } from "agents";
 import { getSchedulePrompt, scheduleSchema } from "agents/schedule";
@@ -57,7 +58,9 @@ export class ChatAgent extends AIChatAgent<Env, BrieflyState> {
 
   async onChatMessage(_onFinish: unknown, options?: OnChatMessageOptions) {
     const mcpTools = this.mcp.getAITools();
-    const workersai = createWorkersAI({ binding: this.env.AI });
+    const workersai = createWorkersAI({
+      binding: withStreamDedupe(this.env.AI)
+    });
 
     const result = streamText({
       model: workersai(MODEL, { sessionAffinity: this.sessionAffinity }),
@@ -65,7 +68,7 @@ export class ChatAgent extends AIChatAgent<Env, BrieflyState> {
 
 ${factsPrompt(this.state.facts)}
 
-When the user shares a lasting preference, goal or personal detail, call the remember tool. When they ask you to forget something, call forget.
+When the user shares a lasting preference, goal or personal detail, call the remember tool once, unless it is already remembered below. When they ask you to forget something, call forget.
 
 ${getSchedulePrompt({ date: new Date() })}
 

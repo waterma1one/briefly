@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAX_FACTS, addFact, factsPrompt, removeFacts } from "../src/memory";
+import { stripDuplicateFields } from "../src/ai-binding";
 import { MAX_QUESTIONS, parseQuestions } from "../src/research";
 
 describe("memory", () => {
@@ -60,5 +61,38 @@ describe("parseQuestions", () => {
 
   it("returns empty for unusable output", () => {
     expect(parseQuestions("")).toEqual([]);
+  });
+});
+
+describe("stripDuplicateFields", () => {
+  const usage = { choices: [], usage: { total_tokens: 0 } };
+
+  it("drops the top-level copy next to a streamed delta", () => {
+    const delta = { choices: [{ delta: { tool_calls: [{ index: 0 }] } }] };
+    const line = `data: ${JSON.stringify({ ...delta, tool_calls: [{ index: 0 }] })}`;
+    expect(JSON.parse(stripDuplicateFields(line).slice(6))).toEqual(delta);
+  });
+
+  it("drops the top-level text copy next to a streamed delta", () => {
+    const delta = { choices: [{ delta: { content: "hi" } }] };
+    const line = `data: ${JSON.stringify({ ...delta, response: "hi" })}`;
+    expect(JSON.parse(stripDuplicateFields(line).slice(6))).toEqual(delta);
+  });
+
+  it("drops tool_calls from the final usage chunk", () => {
+    const line = `data: ${JSON.stringify({ ...usage, tool_calls: [{ id: "a" }] })}`;
+    expect(JSON.parse(stripDuplicateFields(line).slice(6))).toEqual(usage);
+  });
+
+  it("keeps streamed deltas untouched", () => {
+    const line = `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0 }] } }] })}`;
+    expect(stripDuplicateFields(line)).toBe(line);
+  });
+
+  it("passes through [DONE] and partial JSON", () => {
+    expect(stripDuplicateFields("data: [DONE]")).toBe("data: [DONE]");
+    expect(stripDuplicateFields('data: {"choices":[')).toBe(
+      'data: {"choices":['
+    );
   });
 });
